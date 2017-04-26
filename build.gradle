@@ -14,19 +14,29 @@
  * limitations under the License.
  */
 
+/*
+ * Requires ossrhUsername and ossrhPassword to be set either in 
+ * ~/.gradle/gradle.properties or to be passed via commandline 
+ * gradlew publish -PossrhUsername=<SonartypeUsername> -PossrhPassword=<SonartypePassword>
+ */
+
 apply plugin: 'java'
 apply plugin: 'maven-publish'
 apply plugin: 'signing'
 
 group = 'de.sonsts'
-version = '1.000.00.SNAPSHOT'
+version = '1.000.00-SNAPSHOT'
 
 sourceCompatibility = 1.8
 targetCompatibility = 1.8
 
 repositories {
-	mavenLocal()
-    mavenCentral()
+   mavenCentral()
+   
+   maven {
+    // Download snapshot, release and staged artifacts from staging group
+    url "https://oss.sonatype.org/content/groups/staging"
+  }
 }
 
 sourceSets {
@@ -52,13 +62,15 @@ buildscript {
     }
 }
     
-
+configurations.all {
+  resolutionStrategy.cacheChangingModulesFor 0, 'seconds'
+}
     
 dependencies {
-	compile "log4j:log4j:1.2.17"
+  compile "log4j:log4j:1.2.17"
 
-	testCompile 'junit:junit:4.12'
-    testCompile 'org.mockito:mockito-core:1.9.5'
+  testCompile 'junit:junit:4.12'
+  testCompile 'org.mockito:mockito-core:1.9.5'
 }
 
 task javadocJar(type: Jar) {
@@ -87,47 +99,99 @@ publishing {
     }
 }
 
-/*uploadArchives {
-  repositories {
-    mavenDeployer {
-      beforeDeployment { MavenDeployment deployment -> signing.signPom(deployment) }
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            customizePom(pom, rootProject)
+            from components.java
 
-      repository(url: repositoryUrl) {
-        authentication(userName: ossrhUsername, password: ossrhPassword)
-      }
+            artifact sourcesJar
+            artifact javadocJar
 
-      snapshotRepository(url: snapshotRepositoryUrl) {
-        authentication(userName: ossrhUsername, password: ossrhPassword)
-      }
+            // sign the pom
+            pom.withXml {
+                def pomFile = file("${project.buildDir}/generated-pom.xml")
+                writeTo(pomFile)
+                def pomAscFile = signing.sign(pomFile).signatureFiles[0]
+                artifact(pomAscFile) {
+                    classifier = null
+                    extension = 'pom.asc'
+                }
+                pomFile.delete()
+            }
 
-      pom.project {
-        name projectBaseName
-        packaging projectPackaging
-        // optionally artifactId can be defined here 
-        description projectDescription
-        url projectUrl
-
-        scm {
-          connection scmConnection
-          developerConnection scmDeveloperConnection
-          url scmUrl
+            // sign the artifacts
+            project.tasks.signArchives.signatureFiles.each {
+                artifact(it) {
+                    def matcher = it.file =~ /-(sources|javadoc)\.jar\.asc$/
+                    if (matcher.find()) {
+                        classifier = matcher.group(1)
+                    } else {
+                        classifier = null
+                    }
+                    extension = 'jar.asc'
+                }
+            }
         }
-
-        licenses {
-          license {
-            name licenseName
-            url licenseUrl
-          }
-        }
-
-        developers {
-          developer {
-            id developerId
-            name developerName
-            email developerEmail
-          }
-        }
-      }
     }
-  }
-}*/
+    repositories {
+        maven {
+            
+               if(project.version.endsWith('-SNAPSHOT')) {
+                url "https://oss.sonatype.org/content/repositories/snapshots/"
+            } else {
+                url "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
+            }
+            
+            credentials {
+                username ossrhUsername
+                password ossrhPassword
+            }
+        }
+    }
+}
+
+def customizePom(pom, gradleProject) {
+    pom.withXml {
+        def root = asNode()
+
+        // eliminate test-scoped dependencies (no need in maven central POMs)
+        root.dependencies.removeAll { dep ->
+            dep.scope == "test"
+        }
+
+        // add all items necessary for maven central publication
+        root.children().last() + {
+            resolveStrategy = Closure.DELEGATE_FIRST
+
+            description gradleProject.description
+            name 'Configuration code'
+            url 'https://github.com/msonst/configuration'
+
+            issueManagement {
+                system 'GitHub'
+                url 'https://github.com/msonst/configuration/issues'
+            }
+            
+            licenses {
+                license {
+                    name 'Apache License 2.0'
+                    url 'https://github.com/msonst/configuration/blob/master/LICENSE'
+                    distribution 'repo'
+                }
+            }
+            scm {
+                url 'https://github.com/msonst/configuration'
+                connection 'scm:git:git@github.com:msonst/configuration.git'
+                developerConnection 'scm:git:ssh://git@github.com:msonst/configuration.git'
+            }
+            developers {
+                developer {
+                    id 'msonst'
+                    name 'Michael Sonst'
+                    email 'codedorado@gmail.com'
+                }
+            }
+        }
+    }
+}
