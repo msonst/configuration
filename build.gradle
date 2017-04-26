@@ -94,14 +94,6 @@ signing {
 publishing {
     publications {
         mavenJava(MavenPublication) {
-            from components.java
-        }
-    }
-}
-
-publishing {
-    publications {
-        mavenJava(MavenPublication) {
             customizePom(pom, rootProject)
             from components.java
 
